@@ -1,1 +1,314 @@
-U
+#Alexandra Noble 8th of March 2024
+#UK3 - DNA methylation analysis of childhood onset IBD patients from Southampton including both parents (trio's analysis)
+
+options(width=200)
+require(minfi)
+require(limma)
+require(IlluminaHumanMethylationEPICmanifest)
+require(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+require(missMethyl)
+require(lumi)
+require(methylumi)
+require(TCGAMethylation450k)
+require(FDb.InfiniumMethylation.hg19)
+require(ggplot2)
+require(ChAMP)
+
+##basedir is changed depending on what computer this was run on this part of the 
+baseDir1 = "C:/Users/anoble/OneDrive - Nexus365/Desktop/Data/triosRawData/Alex_Adams_EPIC_Plate_1/Alex_Adams_EPIC_Plate_1"
+setwd(baseDir1)
+targets1 = read.metharray.sheet(baseDir1, pattern='Adams_Plate_1_Sample_Sheet.csv')
+
+baseDir2 = "C:/Users/anoble/OneDrive - Nexus365/Desktop/Data/triosRawData/Alex_Adams_EPIC_Plate_2/Alex_Adams_EPIC_Plate_2"
+setwd(baseDir2)
+targets2 = read.metharray.sheet(baseDir2, pattern='Adams_Plate_2_Sample_Sheet.csv')
+
+baseDir3= "C:/Users/anoble/OneDrive - Nexus365/Desktop/Data/triosRawData/Alex_Adams_EPIC_Plate_3/Alex_Adams_EPIC_Plate_3"
+setwd(baseDir3)
+targets3 = read.metharray.sheet(baseDir3, pattern='Adams_Plate_3_Sample_Sheet.csv')
+
+target<- rbind(targets1, targets2, targets3)
+# dim(targets1)
+#[1] 96  9
+# dim(targets2)
+#[1] 96  9
+# dim(targets3)
+#[1] 96  9
+
+sub(baseDir1, "",targets1$Basename)
+sub(baseDir2, "",targets2$Basename)
+sub(baseDir3, "",targets3$Basename)
+
+Triosamples <- target[,1:9]
+Triosamples$ID <- target$Sample_Name
+
+RGset <- read.metharray.exp(target = Triosamples)
+##Change wd
+pheno <-read.csv("TriosampleFINALslide.csv",sep=",",header=T,stringsAsFactors=FALSE,colClasses = c("character"))
+
+pheno$Samplearray <- paste(pheno$Slide, pheno$Array)
+RGset$Samplearray <- paste(RGset$Slide, RGset$Array)
+
+m= match(RGset$Samplearray, pheno$Samplearray)
+trios = pheno[m,]
+
+dropinternal <- c("205799790050_R08C01", "205779230072_R07C01", "205799780106_R07C01", "205779230010_R01C01", "205779230111_R02C01", "205799780119_R04C01","205779230020_R02C01", "205779230110_R05C01", "205779230055_R03C01", "205799780105_R06C01", "205799790050_R06C01", "205779230039_R06C01", "205799780142_R03C01", "205799790051_R03C01", "205779230102_R02C01", "205779230018_R04C01", "205799780098_R07C01", "205779230006_R01C01", "205779230046_R07C01", "205799780150_R08C01")
+RGset <- RGset[,!(colnames(RGset) %in% dropinternal)]
+
+###filtering probes
+detP <- detectionP(RGset)
+failed <- detP > 0.01
+t(t(sort(colMeans(failed),decreasing=T))) # Fraction of failed positions per sample
+sum(rowMeans(failed)>0.5)
+#171
+failed.probes <- rownames(detP[rowMeans(failed)>0.5,])
+
+#change wd
+load("featsAll_SNPs_Xr_dens.RData")
+meth.anno <- read.csv('methano.csv', head = T, as.is = T)
+filterProbes <- featsAll$IlmnID[featsAll$include== "FALSE"]
+exclude.probes = unique(c(failed.probes,filterProbes))
+
+XYprobes <- meth.anno$Name[meth.anno$CHR%in%c("X","Y")]
+excludeXY.probes = unique(c(exclude.probes,XYprobes))
+#92985
+
+setwd('C:/Users/anoble/OneDrive - Nexus365/Desktop/Data')
+save(RGset, file="RGset.RData")
+
+MSet.funnorm <- preprocessFunnorm(RGset,nPCs=2,sex = NULL,bgCorr = TRUE,dyeCorr = TRUE,keepCN = FALSE, ratioConvert = TRUE,verbose = 2)
+MSet.funnorm <- MSet.funnorm[!rownames(MSet.funnorm) %in% excludeXY.probes,]
+length(MSet.funnorm)
+save(MSet.funnorm, file ="MSet.funnormfiltered.RData")
+
+require(FlowSorted.Blood.450k)
+cellCounts <- estimateCellCounts(RGset)
+dropsamples <- c("205799790050_R08C01", "205779230072_R07C01")
+cellCounts <- cellCounts[!(rownames(cellCounts) %in% dropsamples),]
+
+save(cellCounts, file="Cellcounts_Trios1.csv")
+
+#qcReport(RGset2, sampNames = pheno$Basename, pdf = "TriospreprocessedQC.pdf")
+
+#mdsPlot(RGset, numPositions = 1000, sampNames = NULL, sampGroups = NULL)
+#tiff('RGsetMDSplot.tiff',width = 10, height = 10, units = 'in', res=300)
+#mdsPlot(RGset, numPositions = 5000, sampGroups = pheno$Age)
+
+#tiff('myCombatMDSplotArray.tiff',width = 10, height = 10, units = 'in', res=300)
+#mdsPlot(myCombat, numPositions = 5000, sampGroups = pheno$Disease, sampNames = pheno$Study.ID.Number)
+#dev.off()
+
+dropsamples <- c("205799790050_R08C01", "205779230072_R07C01")
+MSet.funnorm <- MSet.funnorm[,!(colnames(MSet.funnorm) %in% dropsamples)]
+
+
+######################################################################################################################################################################
+load(file= "RGset.RData")
+load(file= "MSet.funnormfiltered.RData")
+load(file= "myCombat.RData")
+
+trios<-read.csv("triosamples.csv",sep=",", header=T,stringsAsFactors=FALSE,colClasses = c("character"))
+
+#pheno$Samplearray160322 <- paste(pheno$Slide, pheno$Array)
+#RGset$Samplearray <- paste(RGset$Slide, RGset$Array)
+
+#m= match(RGset$Samplearray, pheno$Samplearray160322)
+#trios = pheno[m,]
+
+drop<- c("NA", "NA.1")
+trios <- trios[!(rownames(trios) %in% drop), ]
+setwd("D:/current work")
+meth.anno <- read.csv('methano.csv', head = T, as.is = T)
+
+setwd("D:/Current work/Trios R data")
+load(file= "Cellcounts_Trios1.csv")
+cellpca <- prcomp(cellCounts)
+cc <- cellpca$x[,1:1]
+
+##No need to run further for data analysis if loaded all above packages
+#Combat once for array once for slide
+#myCombatslide <- champ.runCombat(beta=beta,pd=trios,batchname=("Slide"), variablename="Disease")
+#myCombat <- champ.runCombat(beta=myCombatslide,pd=trios, batchname=("Array"), variablename="Disease")
+save(myCombat, file= "myCombat.RData")
+write.table(myCombat, "Southampton_Trios_beta.csv")
+
+
+########################################################################
+#read in subsetted pheno -with no internal controls
+#
+#Then subselect betas for these individuals
+#dropsamples <- c("205799790050_R08C01", "205779230072_R07C01")
+#myCombat <- myCombat[,!(colnames(myCombat) %in% dropsamples)]
+#dim(myCombat)
+#773476    268
+
+
+#cell type proportions
+#cc <- read.csv("Cellcounts_trios.csv")
+#
+#A <- ggplot(cc, aes(x = Cell_Type, y =Proportion, colour= Disease))  
+#A <- A +  geom_boxplot(notch = TRUE)
+#A <- A + theme_classic() + ylim(0.0,1.0)
+#A <- A + ylab("Blood Cell Type")
+#A
+
+#############################################################################################################################################
+library(ENmix)
+EWAS analysis between child and father
+###########################################################
+#####dif between child and father
+mod1 <- model.matrix(~CF+Age+Sex,data=triosCF)
+
+fit1 = lmFit(CFmyCombat,mod1)
+ebf1 = eBayes(fit1)
+ttm <- topTable(ebf1,coef="CF1",number=dim(CFmyCombat)[1])
+
+myTT    <- function(eb,c,n,P,betas,gen){
+  tt <- topTable(eb,coef=c,number=n,p=P)
+  cg <- rownames(tt)
+  nr <- length(cg)
+  an <- meth.anno[match(cg,meth.anno$IlmnID),
+                  c("IlmnID","UCSC_RefGene_Name","CHR","MAPINFO","UCSC_RefGene_Group","UCSC_CpG_Islands_Name")]
+  b0 <- apply(betas[cg,gen == '0'],1,function(x) mean(x,rm.na=T))
+  b1 <- apply(betas[cg,gen == '1'],1,function(x) mean(x,rm.na=T))
+  bd <- b1 - b0
+  df <- data.frame(Rank = 1:nr, an,b0,b1,bd,tt)
+  invisible(df)
+}
+
+TTCF = myTT(ebf1,"CF1",dim(CFmyCombat)[1],1,CFmyCombat,triosCF$CF)
+
+fout = "TTCF.csv"
+cat("
+", file = fout)
+write.table(TTCF,fout,row.names=F,col.names=T,sep=",",append = T)
+write.table(head(TTCF,5000),"CF-TopTable-5000.csv", row.names=F,col.names=T,sep=",",append = F)
+
+#######DMR imprinting analysis
+M <- B2M(CFmyCombat)
+myAnnotation <- cpg.annotate(object = M, datatype = "array", 
+                             what = "M", 
+                             analysis.type = "differential", 
+                             design = mod1, 
+                             contrasts = FALSE, 
+                             coef = "CF1", 
+                             arraytype = "EPIC",
+                             fdr = 0.1)
+str(myAnnotation)
+#DMR analysisDMRs
+DMRs <- dmrcate(myAnnotation, lambda=1000, C=2)
+results.ranges <- extractRanges(DMRs)
+results.ranges
+
+write.csv(results.ranges, "CF DMR analysis.csv")
+
+###############################################################################################################################################################################
+EWAS analysis between child and mother
+###########################################################
+#####dif between child and mother
+mod1 <- model.matrix(~CF+Age+Sex,data=triosCM)
+
+fit1 = lmFit(CMmyCombat,mod1)
+ebf1 = eBayes(fit1)
+ttm <- topTable(ebf1,coef="CM1",number=dim(CMmyCombat)[1])
+
+myTT    <- function(eb,c,n,P,betas,gen){
+  tt <- topTable(eb,coef=c,number=n,p=P)
+  cg <- rownames(tt)
+  nr <- length(cg)
+  an <- meth.anno[match(cg,meth.anno$IlmnID),
+                  c("IlmnID","UCSC_RefGene_Name","CHR","MAPINFO","UCSC_RefGene_Group","UCSC_CpG_Islands_Name")]
+  b0 <- apply(betas[cg,gen == '0'],1,function(x) mean(x,rm.na=T))
+  b1 <- apply(betas[cg,gen == '1'],1,function(x) mean(x,rm.na=T))
+  bd <- b1 - b0
+  df <- data.frame(Rank = 1:nr, an,b0,b1,bd,tt)
+  invisible(df)
+}
+
+TTCF = myTT(ebf1,"CM1",dim(CMmyCombat)[1],1,CMmyCombat,triosCM$CM)
+
+fout = "TTCF.csv"
+cat("
+", file = fout)
+write.table(TTCM,fout,row.names=F,col.names=T,sep=",",append = T)
+write.table(head(TTCM,5000),"CM-TopTable-5000.csv", row.names=F,col.names=T,sep=",",append = F)
+
+#######DMR imprinting analysis
+M <- B2M(CMmyCombat)
+myAnnotation <- cpg.annotate(object = M, datatype = "array", 
+                             what = "M", 
+                             analysis.type = "differential", 
+                             design = mod1, 
+                             contrasts = FALSE, 
+                             coef = "CF1", 
+                             arraytype = "EPIC",
+                             fdr = 0.1)
+str(myAnnotation)
+#DMR analysisDMRs
+DMRs <- dmrcate(myAnnotation, lambda=1000, C=2)
+results.ranges <- extractRanges(DMRs)
+results.ranges
+
+write.csv(results.ranges, "CM DMR analysis.csv")
+###########################################################################################################################
+
+#############################################################
+#child CD exposed to smoking 0 or 1
+
+mod3 <- model.matrix(~Exposed+cc+Confirmed_diagnosis+Age+Sex+Smoking ,data=trios)
+fit1 = lmFit(myCombat,mod3)
+ebf1 = eBayes(fit1)
+ttm <- topTable(ebf1,coef="Exposed",number=dim(myCombat)[1])
+
+myTT    <- function(eb,c,n,P,betas,gen){
+  tt <- topTable(eb,coef=c,number=n,p=P)
+  cg <- rownames(tt)
+  nr <- length(cg)
+  an <- meth.anno[match(cg,meth.anno$IlmnID),
+                  c("IlmnID","UCSC_RefGene_Name","CHR","MAPINFO","UCSC_RefGene_Group","UCSC_CpG_Islands_Name")]
+  b0 <- apply(betas[cg,gen == '0'],1,function(x) mean(x,rm.na=T))
+  b1 <- apply(betas[cg,gen == '1'],1,function(x) mean(x,rm.na=T))
+  bd <- b1 - b0
+  df <- data.frame(Rank = 1:nr, an,b0,b1,bd,tt)
+  invisible(df)
+}
+
+TTExposed = myTT(ebf1,"Exposed",dim(myCombat)[1],1,myCombat,trios$Exposed)
+
+fout = "TTTriosExposed.csv"
+cat("
+", file = fout)
+write.table(TTExposed,fout,row.names=F,col.names=T,sep=",",append = T)
+write.table(head(TTExposed,5000),"TriosExposedCD-TopTable-5000.csv", row.names=F,col.names=T,sep=",",append = F)
+######################################################################
+#Manhatten
+library(ggplot2)
+library(ggrepel)
+library(numbers)
+library(data.table)
+library(dbplyr)
+
+md1 <- read.csv("TTTriosExposed.csv")
+md1$"P.Value" <- as.numeric(md1$"P.Value")
+md1$log10Pval <- -1*log10(md1$"P.Value")
+md1$CHRfac <- as.factor(md1$CHR)
+xticks <- 1:22
+axisdf <- md1 %>% group_by(CHR) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+
+
+mh <- ggplot(md1, aes(x=CHR, y=log10Pval))+
+  geom_jitter(aes(color=as.factor(CHR)), alpha=0.8, size=1.3) +
+  scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+  # custom X axis:
+  scale_x_continuous(name="Chromosome", breaks=xticks) +
+  scale_y_continuous(expand = c(0, 0) ) + 
+  # Add highlighted points
+  geom_point(data=subset(md1, log10Pval > 6), size=0) +
+  geom_hline(aes(yintercept=6), colour="blue", linetype="dashed")+
+  # Add label using ggrepel to avoid overlapping
+  geom_text_repel(data=subset(md1, log10Pval > 6), colour="black", aes(label=UCSC_RefGene_Name), size=4) +
+  theme_bw() +theme(legend.position="none",panel.border = element_blank(),
+                    panel.grid.major.x = element_blank(),panel.grid.minor.x = element_blank()
+  )
+
+mh
