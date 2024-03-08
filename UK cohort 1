@@ -1,0 +1,536 @@
+## contains peads IBD from Oxford and Cambridge
+## samples at diagnosis, esculators and controls
+## Arrays carried out at UCL data returned 02/02/23 
+## N= 30 controls, N= 33 esculators, N=86 IBD patients 
+
+#Preprossing
+##basedir is changed depending on what computer this was run on this part of the 
+baseDir1 = "D:/Ox_peads/Ox_peads_data_EPIC/EPIC_Adams"
+setwd(baseDir1)
+targets1 = read.metharray.sheet(baseDir1, pattern='Adams_Samplesheet.csv')
+
+
+#check how many targes
+#target<- rbind(targets1)
+target <- targets1[1:120,]
+#target <- target[1:192,]
+# dim(targets1)
+#[1] 96  9
+# dim(targets2)
+#[1] 96  9
+
+sub(baseDir1, "",targets1$Basename)
+
+RGset <- read.metharray.exp(targets = targets1, force=TRUE)
+
+#if any samples failed they can be removed here
+dropsamples <- c("206693200180_R02C01", "206693200061_R02C01","206693200035_R05C01","206693200141_R05C01") 
+RGset <- RGset[,!(colnames(RGset) %in% dropsamples)]
+
+
+##Change wd
+setwd("D:/Ox_peads/Data_analysis")
+qcReport(RGset, sampNames = oxfordsamples$EPIC_number, sampGroups = oxfordsamples$Diagnosis, pdf = "Ox_peads_qcReport.pdf")
+
+oxfordsamples <- read.csv("OXwithestSex.csv",header=TRUE,stringsAsFactors=FALSE, colClasses = c("character"))
+dropsamples <- c("OX_PEADS_046", "OX_PEADS_009", "OX_PEADS_006", "OX_PEADS_021") 
+oxfordsamples <- oxfordsamples[!(oxfordsamples$Sample_Name %in% dropsamples),]
+
+
+#drop samples in samplesheet if they failed
+#dropsamples <- c("OX_PEADS_056","OX_PEADS_030", "OX_PEADS_054", "OX_PEADS_015", "OX_PEADS_002", "CAM_PEADS_087", "CAM_PEADS_091", "OX_PEADS_041")
+#Ox_peads <- oxfordsamples[!(oxfordsamples$EPIC_number %in% dropsamples),]
+
+
+###filtering probes
+detP <- detectionP(RGset)
+failed <- detP > 0.01
+t(t(sort(colMeans(failed),decreasing=T))) # Fraction of failed positions per sample
+sum(rowMeans(failed)>0.5)
+#194
+failed.probes <- rownames(detP[rowMeans(failed)>0.5,])
+
+#change wd
+load("featsAll_SNPs_Xr_dens.RData")
+meth.anno <- read.csv('methano.csv', head = T, as.is = T)
+filterProbes <- featsAll$IlmnID[featsAll$include== "FALSE"]
+exclude.probes = unique(c(failed.probes,filterProbes))
+
+XYprobes <- meth.anno$Name[meth.anno$CHR%in%c("X","Y")]
+excludeXY.probes = unique(c(exclude.probes,XYprobes))
+length(excludeXY.probes)
+#93908
+RGset <- RGset[!rownames(RGset) %in% excludeXY.probes,]
+save(RGset, file="RGsetOx_peads.RData")
+
+MSet.funnorm <- preprocessFunnorm(RGset,nPCs=2,sex = NULL,bgCorr = TRUE,dyeCorr = TRUE,keepCN = FALSE, ratioConvert = TRUE,verbose = 2)
+MSet.funnorm <- MSet.funnorm[!rownames(MSet.funnorm) %in% excludeXY.probes,]
+length(MSet.funnorm)
+save(MSet.funnorm, file ="MSet.funnorm.RData")
+
+mdsPlot(myCombat,numPositions = 1000, sampGroups = oxfordsamples$Diagnosis)
+MSet <- preprocessRaw(RGset) #rw values forinital qc
+densityPlot(MSet, sampGroups= oxfordsamples$Cohort)
+controlStripPlot(RGset, controls="BISULFITE CONVERSION II")
+qcReport(RGset, pdf= "qcReport.pdf")
+GMsetEx <- mapToGenome(MSet)
+estSex <- getSex(GMsetEx)
+GMsetEx <- addSex(GMsetEx, sex = estSex)
+plotSex(getSex(GMsetEx, cutoff = -2))
+oxfordsamples$estSex <- estSex$predictedSex
+
+require(FlowSorted.Blood.450k)
+cellCounts <- estimateCellCounts(RGset)
+write.csv(cellCounts, file="Cellcounts_Ox_peads.csv")
+
+##No need to run further for data analysis if loaded all above packages
+#Combat once for array once for slide
+beta <- getBeta(MSet.funnorm)
+
+myCombatslide <- champ.runCombat(beta=beta,pd=oxfordsamples,batchname=("Sentrix_ID"), variablename="IBD.1")
+
+myCombat<- champ.runCombat(beta=myCombatslide,pd=oxfordsamples,batchname=("Position"), variablename = "IBD.1")
+
+save(myCombat, file="myCombat.RData")
+
+########################################################################################
+
+#################################
+options(width=200)
+require(minfi)
+require(limma)
+require(IlluminaHumanMethylationEPICmanifest)
+require(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+require(missMethyl)
+require(lumi)
+require(methylumi)
+require(TCGAMethylation450k)
+require(FDb.InfiniumMethylation.hg19)
+require(ggplot2)
+require(ChAMP)
+
+setwd("D:/Ox_peads/Data_analysis")
+load(file= "RGsetOx_peads.RData")
+load(file= "MSet.funnorm.RData")
+load(file= "myCombat.RData")
+options(max.print=999999)
+meth.anno <- read.csv('methano.csv')
+
+
+#oxfordsamples2 <- read.csv("OxwithestSex.csv",header=TRUE,stringsAsFactors=TRUE, colClasses = c("character"))
+
+oxfordsamples <- read.csv("OxwithestSex.csv",header=TRUE,stringsAsFactors=TRUE)
+
+dropsamples <- c("OX_PEADS_046", "OX_PEADS_009", "OX_PEADS_006", "OX_PEADS_021") 
+oxfordsamples <- oxfordsamples[!(oxfordsamples$Sample_Name %in% dropsamples),]
+
+CellCounts <- read.csv(file= "Cellcounts_Ox_peads.csv")
+cellpca <- prcomp(CellCounts[2:7])
+cc <- cellpca$x[,1:1]
+
+oxfordsamples$cc <- cc
+oxfordsamples$Array <- colnames(myCombat)
+
+
+
+autoplot(cellpca)
+T <- CellCounts[2:7]
+pca_res <- prcomp(T, scale. = TRUE)
+t <- autoplot(pam(CellCounts[2:7],6))
+
+a <- autoplot(pam(CellCounts[2:7], 6), frame = TRUE, frame.type = 'norm')
+a <- a + theme_classic()
+a
+
+cc2 <- read.csv("Cellcounts2.csv")
+
+
+library(rstatix)
+stat.test <- cc2 %>%group_by(Gene) %>%
+  t_test(B~ IBD) %>%
+  adjust_pvalue(method = "fdr")%>%
+  add_significance()
+stat.test
+
+stat.test <- stat.test %>% add_xy_position(x = "IBD")
+
+A <- ggplot(cc2, aes(x = IBD, y = B, colour = IBD)) +
+  geom_boxplot(alpha = 0) +
+  geom_point(position = position_dodge(width = 0.75), aes(group = IBD)) +
+  facet_wrap(~Gene)+
+  theme_cowplot() + theme(legend.position = "none") +
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", hide.ns = TRUE, tip.length = 0.01)  +  
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  ylab("Proportion") +
+  xlab("Disease")
+A
+
+
+Diagnosis <- as.factor(oxfordsamples$Diagnosis)
+Diagnosis.2 <- as.factor(oxfordsamples2$Diagnosis)
+Es <- as.factor(oxfordsamples$Esculation)
+
+library(dplyr)
+pheno <- oxfordsamples %>% dplyr::count(Disease,Age.Acc >10)
+pheno
+
+oxfordsamples  %>%
+  group_by(IBD) %>%
+  dplyr::summarize(median = median(Age.1, na.rm=TRUE))
+
+oxfordsamples  %>%
+  group_by(IBD) %>%
+  pivot_wider(Age.Acc)
+
+library(limma)
+
+####################################################################
+###############################################################
+oxfordsamples$IBD <- as.numeric(oxfordsamples$IBD)
+
+mod1 <- model.matrix(~IBD+cc+Sex.1+Cohort+Age.1,data=oxfordsamples)
+
+fit1 = lmFit(myCombat,mod1)
+ebf1 = eBayes(fit1)
+ttm <- topTable(ebf1,coef="IBD",number=dim(myCombat)[1])
+
+myTT    <- function(eb,c,n,P,betas,gen){
+  tt <- topTable(eb,coef=c,number=n,p=P)
+  cg <- rownames(tt)
+  nr <- length(cg)
+  an <- meth.anno[match(cg,meth.anno$IlmnID),
+                  c("IlmnID","UCSC_RefGene_Name","CHR","MAPINFO","UCSC_RefGene_Group","UCSC_CpG_Islands_Name")]
+  b0 <- apply(betas[cg,gen == '0'],1,function(x) mean(x,rm.na=T))
+  b1 <- apply(betas[cg,gen == '1'],1,function(x) mean(x,rm.na=T))
+  bd <- b1 - b0
+  df <- data.frame(Rank = 1:nr, an,b0,b1,bd,tt)
+  invisible(df)
+}
+
+TTIBD2 = myTT(ebf1,"IBD",dim(myCombat)[1],1,myCombat,oxfordsamples$IBD)
+
+fout = "TTIBD2.csv"
+cat("
+", file = fout)
+write.table(TTIBD2,fout,row.names=F,col.names=T,sep=",",append = T)
+write.table(head(TTIBD2,5000),"IBD2-TopTable-5000.csv", row.names=F,col.names=T,sep=",",append = F)
+holm<- p.adjust(TTIBD2$P.Value, method = "holm", n = length(TTIBD2$P.Value))
+TTIBD2$Holm <- holm
+write.table(TTIBD2,fout,row.names=F,sep=",",append = F)
+write.table(head(TTIBD2,50000),"IBD2-TopTable-50000.csv",row.names=F,sep=",",append = F)
+######################################################################################################################################
+#MH plot
+require(QCEWAS)
+TTIBD2$P_VAL = TTIBD2$P.Value
+EWAS_plots(TTIBD2,save_name ="TTIBDQQ11123plot.tiff")
+#####################################################################################################################################
+#re-formatting datasets for individual variable models depending on disease of interest
+UCsamples <- oxfordsamples[which(oxfordsamples$UC== "1"),]
+CDsamples <- oxfordsamples[which(oxfordsamples$CD=="1"),]
+Controlsamples <- oxfordsamples[which(oxfordsamples$Diagnosis=="Control"),]
+IBDUsamples <- oxfordsamples[which(oxfordsamples$Diagnosis=="IBDU"),]
+VEOIBDsamples <- oxfordsamples[which(oxfordsamples$Diagnosis=="VEOIBD"),]
+Esculatorsamples <- oxfordsamples[which(oxfordsamples$Esculation=="Yes"),]
+NonEsculatorsamples <- oxfordsamples[which(oxfordsamples$Esculation=="No"),]
+OXEsculatorsamples <- Esculatorsamples[which(Esculatorsamples$Cohort=="Oxford"),]
+CAMEsculatorsamples <- Esculatorsamples[which(Esculatorsamples$Esculation=="Cambridge"),]
+earlydiagIBD <-oxfordsamples[which(oxfordsamples$Diagnosis_time_6months=="1"),]
+earlydiagcont <-oxfordsamples[which(oxfordsamples$Diagnosis_time_6months=="0"),]
+
+CDmyCombat <- myCombat[,(colnames(myCombat) %in% CDsamples$Array)]
+UCmyCombat <- myCombat[,(colnames(myCombat) %in% UCsamples$Array)]
+ControlmyCombat <- myCombat[,(colnames(myCombat) %in% Controlsamples$Array)]
+IBDUmyCombat <- myCombat[,(colnames(myCombat) %in% IBDUsamples$Array)]
+VEOIBDmyCombat <- myCombat[,(colnames(myCombat) %in% VEOIBDsamples$Array)]
+EsculatormyCombat <- myCombat[,(colnames(myCombat) %in% Esculatorsamples$Array)]
+nonEsculatormyCombat <- myCombat[,(colnames(myCombat) %in% NonEsculatorsamples$Array)]
+OXEsculatormyCombat <- EsculatormyCombat[,(colnames(EsculatormyCombat) %in% OXEsculatorsamples$Array)]
+CAMEsculatormyCombat <- EsculatormyCombat[,(colnames(EsculatormyCombat) %in% CAMEsculatorsamples$Array)]
+EarlyDiamyCombat <- myCombat[,(colnames(myCombat) %in% earlydiagIBD$Array)]
+EarlyDiamyCombat2 <- myCombat[,(colnames(myCombat) %in% earlydiagcont$Array)]
+
+ssCD <- rbind(CDsamples, Controlsamples)
+combatCD <- cbind(CDmyCombat, ControlmyCombat)
+
+ssUC <- rbind(UCsamples, Controlsamples)
+combatUC <- cbind(UCmyCombat, ControlmyCombat)
+
+ssIBDU <- rbind(IBDUsamples, Controlsamples)
+combatIBDU <- cbind(IBDUmyCombat, ControlmyCombat)
+
+ssVEOIBD <- rbind(VEOIBDsamples, Controlsamples)
+combatVEOIBD <- cbind(VEOIBDmyCombat, ControlmyCombat)
+
+ssEsculators <- rbind(Esculatorsamples, NonEsculatorsamples)
+combatEscu <- cbind(EsculatormyCombat, nonEsculatormyCombat)
+
+ssEarlydiag <- rbind(earlydiagIBD, earlydiagcont)
+combatEarlydiag <- cbind(EarlyDiamyCombat, EarlyDiamyCombat2)
+
+
+#####################################################################################
+
+##########################################################################################
+#Looking for EWAS differences between CD vs controls
+ssCD$IBD <- as.numeric(ssCD$IBD)
+ssCD$CD <- as.numeric(ssCD$CD)
+mod2 <- model.matrix(~CD+cc+Sex.1+Cohort,data=ssCD)
+
+fit1 = lmFit(combatCD,mod2)
+ebf1 = eBayes(fit1)
+ttm <- topTable(ebf1,coef="CD",number=dim(combatCD)[1])
+
+myTT    <- function(eb,c,n,P,betas,gen){
+  tt <- topTable(eb,coef=c,number=n,p=P)
+  cg <- rownames(tt)
+  nr <- length(cg)
+  an <- meth.anno[match(cg,meth.anno$IlmnID),
+                  c("IlmnID","UCSC_RefGene_Name","CHR","MAPINFO","UCSC_RefGene_Group","UCSC_CpG_Islands_Name")]
+  b0 <- apply(betas[cg,gen == '0'],1,function(x) mean(x,rm.na=T))
+  b1 <- apply(betas[cg,gen == '1'],1,function(x) mean(x,rm.na=T))
+  bd <- b1 - b0
+  df <- data.frame(Rank = 1:nr, an,b0,b1,bd,tt)
+  invisible(df)
+}
+
+TTCD = myTT(ebf1,"CD",dim(combatCD)[1],1,combatCD,ssCD$CD)
+fout = "TTCD.csv"
+cat("
+", file = fout)
+write.table(TTCD,fout,row.names=F,sep=",",append = F)
+write.table(head(TTCD,5000),"CD-TopTable-5000.csv",sep=",",append = F)
+TTCD$P_VAL = TTCD$P.Value
+EWAS_plots(TTCD,save_name ="TTCDQQplot170323.csv")
+
+##########################################################################################
+#EWAS UC vs controls
+ssUC$IBD <- as.numeric(ssUC$IBD)
+mod3 <- model.matrix(~IBD+cc+Sex.1+Cohort,data=ssUC)
+
+fit1 = lmFit(combatUC,mod3)
+ebf1 = eBayes(fit1)
+ttm <- topTable(ebf1,coef="IBD",number=dim(combatUC)[1])
+
+myTT    <- function(eb,c,n,P,betas,gen){
+  tt <- topTable(eb,coef=c,number=n,p=P)
+  cg <- rownames(tt)
+  nr <- length(cg)
+  an <- meth.anno[match(cg,meth.anno$IlmnID),
+                  c("IlmnID","UCSC_RefGene_Name","CHR","MAPINFO","UCSC_RefGene_Group","UCSC_CpG_Islands_Name")]
+  b0 <- apply(betas[cg,gen == '0'],1,function(x) mean(x,rm.na=T))
+  b1 <- apply(betas[cg,gen == '1'],1,function(x) mean(x,rm.na=T))
+  bd <- b1 - b0
+  df <- data.frame(Rank = 1:nr, an,b0,b1,bd,tt)
+  invisible(df)
+}
+
+TTUC = myTT(ebf1,"IBD",dim(combatUC)[1],1,combatUC,ssUC$IBD)
+
+fout = "TTUC.csv"
+cat("
+", file = fout)
+write.table(TTUC,fout,row.names=F,sep=",",append = F)
+write.table(head(TTUC,5000),"UC-TopTable-5000.csv",sep=",",append = F)
+TTUC$P_VAL = TTUC$P.Value
+EWAS_plots(TTUC,save_name ="TTUCQQplot170322")
+
+##################################################################################################
+# EWAS Esculators
+ssEsculators$Esulator<- as.numeric(ssEsculators$Esulator)
+mod6 <- model.matrix(~Esulator+cc+Sex.1,data=ssEsculators)
+
+fit1 = lmFit(combatEscu,mod6)
+ebf1 = eBayes(fit1)
+ttm <- topTable(ebf1,coef="Esulator",number=dim(combatEscu)[1])
+
+myTT    <- function(eb,c,n,P,betas,gen){
+  tt <- topTable(eb,coef=c,number=n,p=P)
+  cg <- rownames(tt)
+  nr <- length(cg)
+  an <- meth.anno[match(cg,meth.anno$IlmnID),
+                  c("IlmnID","UCSC_RefGene_Name","CHR","MAPINFO","UCSC_RefGene_Group","UCSC_CpG_Islands_Name")]
+  b0 <- apply(betas[cg,gen == '0'],1,function(x) mean(x,rm.na=T))
+  b1 <- apply(betas[cg,gen == '1'],1,function(x) mean(x,rm.na=T))
+  bd <- b1 - b0
+  df <- data.frame(Rank = 1:nr, an,b0,b1,bd,tt)
+  invisible(df)
+}
+
+TTEsc = myTT(ebf1,"Esulator",dim(combatEscu)[1],1,combatEscu,ssEsculators$Esulator)
+
+fout = "TTEsc.csv"
+cat("
+", file = fout)
+write.table(TTEsc,fout,row.names=F,col.names=T,sep=",",append = T)
+write.table(head(TTEsc,5000),"Esculators-TopTable-5000.csv",sep=",",append = F)
+TTEsc$P_VAL = TTEsc$P.Value
+EWAS_plots(TTEsc,save_name ="TTEscQQplot")
+
+###########################################################################################################
+#Manhatten plots
+
+##Manhatten
+library(ggplot2)
+library(ggrepel)
+library(numbers)
+
+mh <-read.csv("TTUC.csv", header= TRUE)
+mh <-read.csv("TTIBD.csv", header= TRUE)
+mh <-read.csv("TTCD.csv", header= TRUE)
+mh <-read.csv("TTEsc.csv", header= TRUE)
+mh <-read.csv("TTEsc.csv", header= TRUE)
+mh <-read.csv("TTVEOIBD.csv", header= TRUE)
+
+mh$"P.Value" <- as.numeric(mh$"P.Value")
+mh$log10Pval <- -1*log10(mh$"P.Value")
+mh$CHRfac <- as.factor(mh$CHR)
+xticks <- 1:22
+
+
+mh2 <- ggplot(mh, aes(x=CHR, y=log10Pval))+
+  geom_jitter(aes(color=as.factor(CHR)), alpha=0.8, size=1.3) +
+  scale_color_manual(values = rep(c("grey", "darkblue"), 22 )) +
+  # custom X axis:
+  scale_x_continuous(name="Chromosome", breaks=xticks) +
+  scale_y_continuous(expand = c(0, 0) )
+# Add highlighted points
+
+#mh2 <- mh2+ geom_point(data=subset(mh, log10Pval > 6), size=0) 
+
+
+mh2 <- mh2 + geom_hline(aes(yintercept=6), colour="blue", linetype="dashed")
+# Add label using ggrepel to avoid overlapping
+
+mh2 <- mh2 +geom_text_repel(data=subset(mh, log10Pval > 8.2), colour="black", aes(label=UCSC_RefGene_Name), size=4) +
+  theme_bw() +theme(legend.position="none",panel.border = element_blank(),
+                    panel.grid.major.x = element_blank(),panel.grid.minor.x = element_blank()
+  )
+
+mh2
+
+ggsave("manplotIBDFINAL.tiff", width = 13, height=7 , dpi=300)
+
+################################################################################################
+# Age acceleration
+library(methylclock)
+library(Biobase)
+library(tibble)
+library(impute)
+library(ggplot2)
+library(ggpmisc)
+library(GEOquery)
+library(wateRmelon)
+
+cpgs.missing <- checkClocks(myCombat)
+age <- as.numeric(oxfordsamples$Age.1)
+IBD <- as.factor(oxfordsamples$IBD)
+disease <- oxfordsamples$Diagnosis
+Esculation <- oxfordsamples$Esculation
+
+OXPEADSAC <- DNAmAge(myCombat, age=age)
+OXPEADSAC$IBD <- oxfordsamples$IBD.1
+age <- agep(myCombat)
+oxfordsamples$Horvath <- age$horvath.age
+oxfordsamples$Age.Acc <-oxfordsamples$Horvath  - oxfordsamples$Age.1
+
+mod.horvath1 <- glm(IBD ~ ageAcc.Horvath, data=OXPEADSAC, family="binomial")
+summary(mod.horvath1)
+
+###
+sp <- ggscatter(oxfordsamples, x = "Age.1", y = "Horvath", add = "reg.line",  facet.by= "IBD.1",
+                conf.int = TRUE, color="IBD.1")+
+                stat_cor(aes(colour = "IBD"), method="spearman")+ labs(x = "Chronological age (years)",y= "Horvath Age")+ theme_bw(16)
+
+oxfordsamples$Age.Acc <- OXPEADSAC$ageAcc.Horvath
+
+stat.test <- compare_means(Age.Acc~IBD.1, data = oxfordsamples,method = "wilcox")
+stat.test <- stat.test %>%mutate(y.position = 1.0)
+
+p <- ggplot(oxfordsamples, aes(x = IBD.1, y = Age.Acc, colour = as.factor(IBD))) + 
+  geom_boxplot(alpha = 0, aes(colour = as.factor(IBD))) + 
+  geom_point(position = position_jitter(0.1), aes(colour = as.factor(IBD))) + 
+  labs(x = "",y= "Horvath Age acceleration") +
+  theme_classic(16)
+p
+
+###########################################################################################################
+#Geneotology
+
+sigCpGs <- TTIBD2$IlmnID[1:293]
+all.cpg <- TTIBD2
+check <- getMappedEntrezIDs(sig.cpg = sigCpGs)
+length(check$sig.eg)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+gst <- gometh(sig.cpg=sigCpGs, collection="GO",
+              plot.bias=TRUE, prior.prob= TRUE)
+topGSA(gst, n=40)
+gst.kegg <- gometh(sig.cpg=sigCpGs, collection="KEGG", plot.bias = TRUE)
+top <- topGSA(gst, n=20)
+t <-ggplot(top, aes(x=DE, y= TERM, colour=FDR))+geom_point(size=3) +theme_classic()
+
+###############################################################################################################
+# 4-probe methylation model
+
+RPS6KA2 <- "cg17501210"
+VMP1 <- "cg12054453"
+ARHGEF3 <- "cg04389058"
+CFI <- "cg00382138"
+
+thisB <- myCombatScotOx[RPS6KA2,]
+thisC <- myCombatScotOx[VMP1,]
+thisD <- myCombatScotOx[ARHGEF3,]
+thisE <- myCombatScotOx[CFI,]
+
+newdf <- data.frame("RPS6KA2" = thisB, "VMP1" = thisC, "ARHGEF3"= thisD, "CFI"= thisE, "IBD"= extendss$IBD.1, "Training"= extendss$Type)
+pairs.panels(newdf)
+set.seed(1)
+
+train <- newdf[which(newdf$Training=="Train"),]
+test <- newdf[which(newdf$Training=="Test"),]
+
+logit_m =glm(formula =IBD~. ,data =train[1:5],family="binomial")
+summary(logit_m)
+logit_P = predict(logit_m , newdata = test[1:5],type = 'response')
+#logit_P <- ifelse(logit_P > 0.5,1,0) # Probability check
+CM= table(test$IBD, logit_P)
+print(CM)
+err_metric(CM)
+roc_score=roc(test$IBD, logit_P) #AUC score
+plot(roc_score,main ="ROC curve -- Logistic Regression", print.auc=TRUE, add=TRUE)
+auc(test$IBD, logit_P)
+ci <- ci.auc(test$IBD, logit_P)
+#95% CI: 0.6849-0.8116 (DeLong)
+coords(roc_score, .9, "threshold", ret=c("sensitivity","specificity","ppv","npv","accuracy"))
+coords(roc_score, .5, "threshold", ret=c("sensitivity","specificity","ppv","npv", "accuracy"))
+plot(ci)
+
+
+pROC_obj <- roc(test$IBD, logit_P, smoothed=TRUE, ci=TRUE, ci.alpha=0.9,plot=TRUE,grid=TRUE,
+                print.auc=TRUE,print.auc.cex=1.2,lwd=4, cex.lab=1.5, cex.sub=1.5, cex.main=1.5, cex.axis=1.3)
+
+###########################################################################################################
+#DMR analysis
+
+#################################methylation regions
+library(ENmix)
+library(DMRcate)
+M <- B2M(myCombat)
+####methylation across genes
+
+
+myAnnotation <- cpg.annotate(object = M, datatype = "array", 
+                             what = "M", 
+                             analysis.type = "differential", 
+                             design = mod1, 
+                             contrasts = FALSE, 
+                             coef = "IBD", 
+                             arraytype = "EPIC",
+                             fdr = 0.0005)
+str(myAnnotation)
+#DMR analysisDMRs
+DMRs <- dmrcate(myAnnotation, lambda=1000, C=2)
+results.ranges <- extractRanges(DMRs)
+results.ranges
+
+write.csv(results.ranges, "IBD DMR analysis.csv")
+
