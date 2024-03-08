@@ -1,4 +1,8 @@
-## contains peads IBD from Oxford and Cambridge
+#UK cohort 1 dataset from previously published cohort
+Two-stage Genome-wide Methylation Profiling in Childhood-onset Crohn's Disease Implicates Epigenetic Alterations at the VMP1/MIR21 and HLA Loci, Adams et al 2014 JCC
+
+
+## UK cohort 2- Childhood onset IBD patients from two centres (Oxford and Cambridge)
 ## samples at diagnosis, esculators and controls
 ## Arrays carried out at UCL data returned 02/02/23 
 ## N= 30 controls, N= 33 esculators, N=86 IBD patients 
@@ -22,25 +26,6 @@ target <- targets1[1:120,]
 sub(baseDir1, "",targets1$Basename)
 
 RGset <- read.metharray.exp(targets = targets1, force=TRUE)
-
-#if any samples failed they can be removed here
-dropsamples <- c("206693200180_R02C01", "206693200061_R02C01","206693200035_R05C01","206693200141_R05C01") 
-RGset <- RGset[,!(colnames(RGset) %in% dropsamples)]
-
-
-##Change wd
-setwd("D:/Ox_peads/Data_analysis")
-qcReport(RGset, sampNames = oxfordsamples$EPIC_number, sampGroups = oxfordsamples$Diagnosis, pdf = "Ox_peads_qcReport.pdf")
-
-oxfordsamples <- read.csv("OXwithestSex.csv",header=TRUE,stringsAsFactors=FALSE, colClasses = c("character"))
-dropsamples <- c("OX_PEADS_046", "OX_PEADS_009", "OX_PEADS_006", "OX_PEADS_021") 
-oxfordsamples <- oxfordsamples[!(oxfordsamples$Sample_Name %in% dropsamples),]
-
-
-#drop samples in samplesheet if they failed
-#dropsamples <- c("OX_PEADS_056","OX_PEADS_030", "OX_PEADS_054", "OX_PEADS_015", "OX_PEADS_002", "CAM_PEADS_087", "CAM_PEADS_091", "OX_PEADS_041")
-#Ox_peads <- oxfordsamples[!(oxfordsamples$EPIC_number %in% dropsamples),]
-
 
 ###filtering probes
 detP <- detectionP(RGset)
@@ -88,9 +73,7 @@ write.csv(cellCounts, file="Cellcounts_Ox_peads.csv")
 beta <- getBeta(MSet.funnorm)
 
 myCombatslide <- champ.runCombat(beta=beta,pd=oxfordsamples,batchname=("Sentrix_ID"), variablename="IBD.1")
-
 myCombat<- champ.runCombat(beta=myCombatslide,pd=oxfordsamples,batchname=("Position"), variablename = "IBD.1")
-
 save(myCombat, file="myCombat.RData")
 
 ########################################################################################
@@ -116,13 +99,7 @@ load(file= "myCombat.RData")
 options(max.print=999999)
 meth.anno <- read.csv('methano.csv')
 
-
-#oxfordsamples2 <- read.csv("OxwithestSex.csv",header=TRUE,stringsAsFactors=TRUE, colClasses = c("character"))
-
 oxfordsamples <- read.csv("OxwithestSex.csv",header=TRUE,stringsAsFactors=TRUE)
-
-dropsamples <- c("OX_PEADS_046", "OX_PEADS_009", "OX_PEADS_006", "OX_PEADS_021") 
-oxfordsamples <- oxfordsamples[!(oxfordsamples$Sample_Name %in% dropsamples),]
 
 CellCounts <- read.csv(file= "Cellcounts_Ox_peads.csv")
 cellpca <- prcomp(CellCounts[2:7])
@@ -130,8 +107,6 @@ cc <- cellpca$x[,1:1]
 
 oxfordsamples$cc <- cc
 oxfordsamples$Array <- colnames(myCombat)
-
-
 
 autoplot(cellpca)
 T <- CellCounts[2:7]
@@ -169,18 +144,6 @@ A
 Diagnosis <- as.factor(oxfordsamples$Diagnosis)
 Diagnosis.2 <- as.factor(oxfordsamples2$Diagnosis)
 Es <- as.factor(oxfordsamples$Esculation)
-
-library(dplyr)
-pheno <- oxfordsamples %>% dplyr::count(Disease,Age.Acc >10)
-pheno
-
-oxfordsamples  %>%
-  group_by(IBD) %>%
-  dplyr::summarize(median = median(Age.1, na.rm=TRUE))
-
-oxfordsamples  %>%
-  group_by(IBD) %>%
-  pivot_wider(Age.Acc)
 
 library(limma)
 
@@ -453,6 +416,19 @@ p <- ggplot(oxfordsamples, aes(x = IBD.1, y = Age.Acc, colour = as.factor(IBD)))
   theme_classic(16)
 p
 
+library(dplyr)
+pheno <- oxfordsamples %>% dplyr::count(Disease,Age.Acc >10)
+pheno
+
+oxfordsamples  %>%
+  group_by(IBD) %>%
+  dplyr::summarize(median = median(Age.1, na.rm=TRUE))
+
+oxfordsamples  %>%
+  group_by(IBD) %>%
+  pivot_wider(Age.Acc)
+
+
 ###########################################################################################################
 #Geneotology
 
@@ -510,13 +486,10 @@ pROC_obj <- roc(test$IBD, logit_P, smoothed=TRUE, ci=TRUE, ci.alpha=0.9,plot=TRU
 
 ###########################################################################################################
 #DMR analysis
-
-#################################methylation regions
 library(ENmix)
 library(DMRcate)
 M <- B2M(myCombat)
 ####methylation across genes
-
 
 myAnnotation <- cpg.annotate(object = M, datatype = "array", 
                              what = "M", 
